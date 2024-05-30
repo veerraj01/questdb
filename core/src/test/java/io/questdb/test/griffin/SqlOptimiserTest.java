@@ -1447,6 +1447,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
+    @Test
+    public void testRewriteGroupByTrivialExpressionsUnusedColumns() throws Exception {
+
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE hits (\n" +
+                    "    ClientIP int,\n" +
+                    "    EventTime timestamp\n" +
+                    ") timestamp(EventTime) partition by day wal;");
+
+
+            String query = "SELECT ClientIP, ClientIP - 1, ClientIP - 3, COUNT(*) AS c " +
+                    "FROM hits " +
+                    "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 " +
+                    "ORDER BY c DESC LIMIT 10;";
+
+            assertModel("select-virtual ClientIP, column, column1, c from (select-group-by [ClientIP, ClientIP - 1 column, ClientIP - 3 column1, COUNT() c] ClientIP, ClientIP - 1 column, ClientIP - 3 column1, COUNT() c from (select [ClientIP] from hits timestamp (EventTime))) order by c desc limit 10", query, ExecutionModel.QUERY);
+        });
+    }
+
     protected QueryModel compileModel(String query) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);

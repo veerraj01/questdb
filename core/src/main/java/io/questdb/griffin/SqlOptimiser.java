@@ -33,8 +33,6 @@ import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
-import io.questdb.griffin.optimiser.QueryModelTraverser;
-import io.questdb.griffin.optimiser.RewriteGroupByTrivialExpressions;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
@@ -101,7 +99,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
-    private final RewriteGroupByTrivialExpressions.OneLiteralAndConstantsVisitor oneLiteralAndConstantsVisitor = new RewriteGroupByTrivialExpressions.OneLiteralAndConstantsVisitor();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -118,9 +115,10 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
-    private final QueryModelTraverser queryModelTraverser = new QueryModelTraverser();
+    private CountLiteralAppearancesVisitor countLiteralAppearancesVisitor = new CountLiteralAppearancesVisitor();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
+    private OneLiteralAndConstantsVisitor oneLiteralAndConstantsVisitor = new OneLiteralAndConstantsVisitor();
     private CharSequence tempColumnAlias;
     private QueryModel tempQueryModel;
 
@@ -3949,73 +3947,114 @@ public class SqlOptimiser implements Mutable {
         return topLevelNode;
     }
 
-//    /**
-//     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
-//     * The aim is to reduce the number of unnecessary keys used in the GROUP BY map.
-//     * <p>
-//     * For a query such as this:<br>
-//     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-//     * FROM hits<br>
-//     * GROUP BY ClientIP, ClientIP - 1<br>
-//     * ORDER BY c DESC LIMIT 10;</code>
-//     * <p>
-//     * <code>
-//     * SELECT ClientIP, ClientIP - 1, c<br>
-//     * FROM (<br>
-//     * &nbsp;SELECT ClientIP, COUNT() c<br>
-//     * &nbsp;FROM hits<br>
-//     * &nbsp;GROUP BY ClientIP<br>
-//     * &nbsp;ORDER BY c DESC<br>
-//     * &nbsp;LIMIT 10<br>
-//     * )
-//     *
-//     * @param model the input query model
-//     */
-//    private QueryModel rewriteGroupByTrivialExpressions(QueryModel model) throws SqlException {
-//        // nullcheck
-//        if (model == null) {
-//            return null;
-//        }
-//
-//        // pull out our expected models
-//        final QueryModel choose = model;
-//        final QueryModel groupBy = model.getNestedModel();
-//
-//        // ensure the pattern matches
-//        if (!(model.isSelectChoose() && groupBy != null && groupBy.isSelectNone() && groupBy.hasGroupBy())) {
-//            // else recurse
-//            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
-//            return model;
-//        }
-//
-//        // If its of the form GROUP BY A, B, C
-//        // Then we don't need to do anything at this stage.
-//        // Constants TBA
-//        if (isOnlyLiteralExpressions(groupBy.getGroupBy())) {
-//            // recurse
-//            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
-//            return model;
-//        }
-//
-//        // let us ignore the function for now, its handled later I think
-//        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
-//            try {
-//                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
-//            } catch (Exception e) {
-//                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
-//                return model;
-//            }
-//        }
-//
-//        CharSequenceIntHashMap literalAppearanceCount = new CharSequenceIntHashMap();
-//
-//        // let us ignore the function for now, its handled later I think
-//        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
-//            traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), countLiteralAppearancesVisitor.of(literalAppearanceCount));
-//        }
-//
-//        return model;
-//    }
+    /**
+     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
+     * The aim is to reduce the number of unnecessary keys used in the GROUP BY map.
+     * <p>
+     * For a query such as this:<br>
+     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM hits<br>
+     * GROUP BY ClientIP, ClientIP - 1<br>
+     * ORDER BY c DESC LIMIT 10;</code>
+     * <p>
+     * <code>
+     * SELECT ClientIP, ClientIP - 1, c<br>
+     * FROM (<br>
+     * &nbsp;SELECT ClientIP, COUNT() c<br>
+     * &nbsp;FROM hits<br>
+     * &nbsp;GROUP BY ClientIP<br>
+     * &nbsp;ORDER BY c DESC<br>
+     * &nbsp;LIMIT 10<br>
+     * )
+     *
+     * @param model the input query model
+     */
+    private QueryModel rewriteGroupByTrivialExpressions(QueryModel model) throws SqlException {
+        // nullcheck
+        if (model == null) {
+            return null;
+        }
+
+        // pull out our expected models
+        final QueryModel choose = model;
+        final QueryModel groupBy = model.getNestedModel();
+
+        // ensure the pattern matches
+        if (!(model.isSelectChoose() && groupBy != null && groupBy.isSelectNone() && groupBy.hasGroupBy())) {
+            // else recurse
+            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+            return model;
+        }
+
+
+        // if any expressions appear in group by but not the enclosing select, we can remove them
+
+        // intentional backwards loop since we are removing group by nodes
+        for (int i = groupBy.getGroupBy().size() - 1; i > 0; i--) {
+            final ExpressionNode node = groupBy.getGroupBy().getQuick(i);
+
+            boolean matching = false;
+            for (int j = 0, m = choose.getColumns().size(); j < m; j++) {
+                final ExpressionNode chooseNode = choose.getColumns().getQuick(j).getAst();
+                matching |= ExpressionNode.compareNodesExact(node, chooseNode);
+            }
+
+            if (!matching) {
+                // remove from group by
+                groupBy.getGroupBy().remove(i);
+                break;
+            }
+        }
+
+
+        // If its of the form GROUP BY A, B, C
+        // Then we don't need to do anything at this stage.
+        // Constants TBA
+        boolean onlyLiterals = true;
+        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+            final ExpressionNode node = groupBy.getGroupBy().getQuick(i);
+            if (node.type != LITERAL) {
+                onlyLiterals = false;
+            }
+        }
+
+        if (onlyLiterals) {
+            // else recurse
+            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+            return model;
+        }
+
+
+        // let us ignore the function for now, its handled later I think
+        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+            try {
+                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
+            } catch (Exception e) {
+                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+                return model;
+            }
+        }
+
+
+        // let us ignore the function for now, its handled later I think
+        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+            try {
+                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
+            } catch (Exception e) {
+                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+                return model;
+            }
+        }
+
+        CharSequenceIntHashMap literalAppearanceCount = new CharSequenceIntHashMap();
+
+        // let us ignore the function for now, its handled later I think
+        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+            traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), countLiteralAppearancesVisitor.of(literalAppearanceCount));
+        }
+
+        return model;
+    }
 
     /**
      * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
@@ -5771,7 +5810,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
-            rewrittenModel = rewriteGro
+            rewrittenModel = rewriteGroupByTrivialExpressions(model);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
@@ -5874,6 +5913,24 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    public static class CountLiteralAppearancesVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+        private CharSequenceIntHashMap counts;
+
+        public CountLiteralAppearancesVisitor of(CharSequenceIntHashMap counts) {
+            this.counts = counts;
+            return this;
+        }
+
+        @Override
+        public void visit(ExpressionNode node) {
+            switch (node.type) {
+                case LITERAL:
+                    this.counts.putIfAbsent(node.token, 0);
+                    this.counts.increment(node.token);
+            }
+        }
+    }
+
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {
         private LowerCaseCharSequenceObjHashMap<QueryColumn> nameTypeMap;
 
@@ -5928,6 +5985,29 @@ public class SqlOptimiser implements Mutable {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
     }
 
+    public static class OneLiteralAndConstantsVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+
+        private CharSequence allowedLiteral = null;
+
+        @Override
+        public void visit(ExpressionNode node) {
+            switch (node.type) {
+                case LITERAL:
+                    if (allowedLiteral == null) {
+                        allowedLiteral = node.token;
+                    }
+                    if (!Chars.equalsIgnoreCase(node.token, allowedLiteral)) {
+                        throw new RuntimeException();
+                    }
+                    return;
+                case CONSTANT:
+                case OPERATION:
+                    return;
+                default:
+                    throw new RuntimeException();
+            }
+        }
+    }
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
 

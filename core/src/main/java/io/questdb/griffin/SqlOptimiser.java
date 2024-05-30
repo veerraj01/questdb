@@ -3946,6 +3946,30 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
+     * <p>
+     * For a query such as this:<br>
+     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM hits<br>
+     * GROUP BY ClientIP, ClientIP - 1<br>
+     * ORDER BY c DESC LIMIT 10;</code>
+     * <p>
+     * <code>
+     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+     * FROM (<br>
+     * SELECT ClientIP, COUNT() c<br>
+     * FROM hits <br>
+     * ORDER BY c DESC<br>
+     * LIMIT 10<br>
+     * )
+     *
+     * @param model the input query model
+     */
+    private QueryModel rewriteGroupByTrivialExpressions(QueryModel model) {
+        return model;
+    }
+
+    /**
      * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
      * <p>
      * For example:
@@ -5699,6 +5723,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
+            rewrittenModel = rewriteGroupByTrivialExpressions(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);

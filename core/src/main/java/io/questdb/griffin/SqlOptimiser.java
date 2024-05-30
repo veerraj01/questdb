@@ -3986,9 +3986,7 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-
         // if any expressions appear in group by but not the enclosing select, we can remove them
-
         // intentional backwards loop since we are removing group by nodes
         for (int i = groupBy.getGroupBy().size() - 1; i > 0; i--) {
             final ExpressionNode node = groupBy.getGroupBy().getQuick(i);

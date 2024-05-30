@@ -4004,7 +4004,6 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-
         // If its of the form GROUP BY A, B, C
         // Then we don't need to do anything at this stage.
         // Constants TBA
@@ -4022,19 +4021,8 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-
-        // let us ignore the function for now, its handled later I think
-        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
-            try {
-                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
-            } catch (Exception e) {
-                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
-                return model;
-            }
-        }
-
-
-        // let us ignore the function for now, its handled later I think
+        // Make sure that all the functions are of the form A or A + 1 or (A + (1 + 3))
+        // We don't want any A + B or f(A)
         for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
             try {
                 traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
@@ -4046,9 +4034,15 @@ public class SqlOptimiser implements Mutable {
 
         CharSequenceIntHashMap literalAppearanceCount = new CharSequenceIntHashMap();
 
-        // let us ignore the function for now, its handled later I think
+        // Count how many appearances of a literal there are.
+        // If there are >1 then we should lift them out of the group by if possible
         for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
             traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), countLiteralAppearancesVisitor.of(literalAppearanceCount));
+        }
+
+
+        for (int i = 0, n = literalAppearanceCount.size(); i < n; i++) {
+
         }
 
         return model;

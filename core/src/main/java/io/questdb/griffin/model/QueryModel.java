@@ -1292,16 +1292,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableNameFunction(RecordCursorFactory function) {
-        this.tableNameFunction = function;
-    }
-
     public void setTableId(int id) {
         this.tableId = id;
     }
 
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
+    }
+
+    public void setTableNameFunction(RecordCursorFactory function) {
+        this.tableNameFunction = function;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
@@ -1323,7 +1323,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
-            toSink0(sink, false, false);
+            toSink0(sink, false, false, false);
         } else if (modelType == ExecutionModel.UPDATE) {
             updateToSink(sink);
         }
@@ -1334,7 +1334,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     @SuppressWarnings("unused")
     public String toString0() {
         StringSink sink = Misc.getThreadLocalSink();
-        this.toSink0(sink, true, true);
+        this.toSink0(sink, true, true, true);
         return sink.toString();
     }
 
@@ -1539,7 +1539,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     // returns textual description of this model, e.g. select-choose [top-down-columns] bottom-up-columns from X ...
-    private void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy) {
+    private void toSink0(CharSink<?> sink, boolean joinSlave, boolean showOrderBy, boolean showGroupBy) {
         if (selectModelType == QueryModel.SELECT_MODEL_SHOW) {
             sink.put(getSelectModelTypeText());
         } else {
@@ -1562,7 +1562,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 tableNameExpr.toSink(sink);
             } else {
                 sink.putAscii('(');
-                nestedModel.toSink0(sink, false, showOrderBy);
+                nestedModel.toSink0(sink, false, showOrderBy, showGroupBy);
                 sink.putAscii(')');
             }
             if (alias != null) {
@@ -1612,7 +1612,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
                         if (model.getWhereClause() != null) {
                             sink.putAscii('(');
-                            model.toSink0(sink, true, showOrderBy);
+                            model.toSink0(sink, true, showOrderBy, showGroupBy);
                             sink.putAscii(')');
                             if (model.getAlias() != null) {
                                 aliasToSink(model.getAlias().token, sink);
@@ -1620,7 +1620,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                 aliasToSink(model.getTableName(), sink);
                             }
                         } else {
-                            model.toSink0(sink, true, showOrderBy);
+                            model.toSink0(sink, true, showOrderBy, showGroupBy);
                         }
 
                         JoinContext jc = model.getContext();
@@ -1715,6 +1715,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
+        if (showGroupBy && groupBy.size() > 0) {
+            sink.putAscii(" group by ");
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.putAscii(", ");
+                }
+                sink.put(groupBy.get(i));
+            }
+        }
+
         if (showOrderBy && orderBy.size() > 0) {
             sink.putAscii(" order by ");
             for (int i = 0, n = orderBy.size(); i < n; i++) {
@@ -1743,6 +1753,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             }
         }
 
+
         if (getLimitLo() != null || getLimitHi() != null) {
             sink.putAscii(" limit ");
             if (getLimitLo() != null) {
@@ -1769,7 +1780,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.putAscii("all ");
                 }
             }
-            unionModel.toSink0(sink, false, showOrderBy);
+            unionModel.toSink0(sink, false, showOrderBy, showGroupBy);
         }
     }
 

@@ -245,6 +245,10 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         pos += length;
     }
 
+    public boolean isEmpty() {
+        return size() == 0;
+    }
+
     public void remove(int index) {
         if (pos < 1 || index >= pos) {
             return;
@@ -277,7 +281,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
         return -1;
     }
-
+    
     public void set(int from, int to, T value) {
         Arrays.fill(buffer, from, Math.min(buffer.length, to), value);
     }
@@ -381,4 +385,5 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
         return false;
     }
+
 }

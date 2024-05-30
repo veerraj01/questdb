@@ -33,6 +33,8 @@ import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
+import io.questdb.griffin.optimiser.QueryModelTraverser;
+import io.questdb.griffin.optimiser.RewriteGroupByTrivialExpressions;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
@@ -99,6 +101,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<CharSequence> literalCollectorBNames = new ObjList<>();
     private final LiteralRewritingVisitor literalRewritingVisitor = new LiteralRewritingVisitor();
     private final int maxRecursion;
+    private final RewriteGroupByTrivialExpressions.OneLiteralAndConstantsVisitor oneLiteralAndConstantsVisitor = new RewriteGroupByTrivialExpressions.OneLiteralAndConstantsVisitor();
     private final ObjList<ExpressionNode> orderByAdvice = new ObjList<>();
     private final IntPriorityQueue orderingStack = new IntPriorityQueue();
     private final Path path;
@@ -115,6 +118,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempList = new IntList();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tmpCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
+    private final QueryModelTraverser queryModelTraverser = new QueryModelTraverser();
     private int defaultAliasCount = 0;
     private ObjList<JoinContext> emittedJoinClauses;
     private CharSequence tempColumnAlias;
@@ -3945,29 +3949,73 @@ public class SqlOptimiser implements Mutable {
         return topLevelNode;
     }
 
-    /**
-     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
-     * <p>
-     * For a query such as this:<br>
-     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-     * FROM hits<br>
-     * GROUP BY ClientIP, ClientIP - 1<br>
-     * ORDER BY c DESC LIMIT 10;</code>
-     * <p>
-     * <code>
-     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-     * FROM (<br>
-     * SELECT ClientIP, COUNT() c<br>
-     * FROM hits <br>
-     * ORDER BY c DESC<br>
-     * LIMIT 10<br>
-     * )
-     *
-     * @param model the input query model
-     */
-    private QueryModel rewriteGroupByTrivialExpressions(QueryModel model) {
-        return model;
-    }
+//    /**
+//     * Looks for models with trivial expressions over the same column, and lifts them from the group by.<br>
+//     * The aim is to reduce the number of unnecessary keys used in the GROUP BY map.
+//     * <p>
+//     * For a query such as this:<br>
+//     * <code>SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
+//     * FROM hits<br>
+//     * GROUP BY ClientIP, ClientIP - 1<br>
+//     * ORDER BY c DESC LIMIT 10;</code>
+//     * <p>
+//     * <code>
+//     * SELECT ClientIP, ClientIP - 1, c<br>
+//     * FROM (<br>
+//     * &nbsp;SELECT ClientIP, COUNT() c<br>
+//     * &nbsp;FROM hits<br>
+//     * &nbsp;GROUP BY ClientIP<br>
+//     * &nbsp;ORDER BY c DESC<br>
+//     * &nbsp;LIMIT 10<br>
+//     * )
+//     *
+//     * @param model the input query model
+//     */
+//    private QueryModel rewriteGroupByTrivialExpressions(QueryModel model) throws SqlException {
+//        // nullcheck
+//        if (model == null) {
+//            return null;
+//        }
+//
+//        // pull out our expected models
+//        final QueryModel choose = model;
+//        final QueryModel groupBy = model.getNestedModel();
+//
+//        // ensure the pattern matches
+//        if (!(model.isSelectChoose() && groupBy != null && groupBy.isSelectNone() && groupBy.hasGroupBy())) {
+//            // else recurse
+//            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+//            return model;
+//        }
+//
+//        // If its of the form GROUP BY A, B, C
+//        // Then we don't need to do anything at this stage.
+//        // Constants TBA
+//        if (isOnlyLiteralExpressions(groupBy.getGroupBy())) {
+//            // recurse
+//            model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+//            return model;
+//        }
+//
+//        // let us ignore the function for now, its handled later I think
+//        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+//            try {
+//                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
+//            } catch (Exception e) {
+//                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
+//                return model;
+//            }
+//        }
+//
+//        CharSequenceIntHashMap literalAppearanceCount = new CharSequenceIntHashMap();
+//
+//        // let us ignore the function for now, its handled later I think
+//        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
+//            traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), countLiteralAppearancesVisitor.of(literalAppearanceCount));
+//        }
+//
+//        return model;
+//    }
 
     /**
      * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
@@ -5723,7 +5771,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
-            rewrittenModel = rewriteGroupByTrivialExpressions(rewrittenModel);
+            rewrittenModel = rewriteGro
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
@@ -5879,6 +5927,7 @@ public class SqlOptimiser implements Mutable {
     private static class NonLiteralException extends RuntimeException {
         private static final NonLiteralException INSTANCE = new NonLiteralException();
     }
+
 
     private class ColumnPrefixEraser implements PostOrderTreeTraversalAlgo.Visitor {
 

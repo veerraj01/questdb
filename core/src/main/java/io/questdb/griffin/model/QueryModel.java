@@ -912,6 +912,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return timestamp != null && explicitTimestamp;
     }
 
+    public final boolean hasGroupBy() {
+        return !getGroupBy().isEmpty();
+    }
+
     @Override
     public int hashCode() {
         int hash = super.hashCode();
@@ -985,6 +989,14 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         } catch (NumericException e) {
             return false;
         }
+    }
+
+    public final boolean isSelectChoose() {
+        return getSelectModelType() == SELECT_MODEL_CHOOSE;
+    }
+
+    public final boolean isSelectNone() {
+        return getSelectModelType() == SELECT_MODEL_NONE;
     }
 
     public boolean isSelectTranslation() {
@@ -1318,6 +1330,35 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setWhereClause(ExpressionNode whereClause) {
         this.whereClause = whereClause;
+    }
+
+    /**
+     * For debugging purposes.
+     *
+     * @return
+     */
+    @SuppressWarnings("unused")
+    public String showSelectModelType() {
+        switch (getSelectModelType()) {
+            case SELECT_MODEL_CHOOSE:
+                return "choose";
+            case SELECT_MODEL_CURSOR:
+                return "cursor";
+            case SELECT_MODEL_DISTINCT:
+                return "distinct";
+            case SELECT_MODEL_GROUP_BY:
+                return "group by";
+            case SELECT_MODEL_NONE:
+                return "none";
+            case SELECT_MODEL_SHOW:
+                return "show";
+            case SELECT_MODEL_VIRTUAL:
+                return "virtual";
+            case SELECT_MODEL_WINDOW:
+                return "window";
+            default:
+                return "unknown";
+        }
     }
 
     @Override
@@ -1817,6 +1858,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         }
     }
 
+
     static {
         modelTypeName.extendAndSet(SELECT_MODEL_NONE, "select");
         modelTypeName.extendAndSet(SELECT_MODEL_CHOOSE, "select-choose");
@@ -1827,4 +1869,5 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         modelTypeName.extendAndSet(SELECT_MODEL_CURSOR, "select-cursor");
         modelTypeName.extendAndSet(SELECT_MODEL_SHOW, "show");
     }
+
 }

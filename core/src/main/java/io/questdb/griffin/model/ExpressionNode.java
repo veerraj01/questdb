@@ -315,6 +315,39 @@ public class ExpressionNode implements Mutable, Sinkable {
         }
     }
 
+    /**
+     * For debugging purposes.
+     *
+     * @return
+     */
+    private String showType() {
+        switch (type) {
+            case ARRAY_ACCESS:
+                return "array_access";
+            case BIND_VARIABLE:
+                return "bind_variable";
+            case CONSTANT:
+                return "constant";
+            case CONTROL:
+                return "control";
+            case FUNCTION:
+                return "function";
+            case LITERAL:
+                return "literal";
+            case MEMBER_ACCESS:
+                return "member_access";
+            case OPERATION:
+                return "operation";
+            case QUERY:
+                return "query";
+            case SET_OPERATION:
+                return "set_operation";
+            case UNKNOWN:
+            default:
+                return "unknown";
+        }
+    }
+
     public static final class ExpressionNodeFactory implements ObjectFactory<ExpressionNode> {
         @Override
         public ExpressionNode newInstance() {

@@ -4021,28 +4021,25 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        // Make sure that all the functions are of the form A or A + 1 or (A + (1 + 3))
-        // We don't want any A + B or f(A)
-        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
-            try {
-                traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), oneLiteralAndConstantsVisitor);
-            } catch (Exception e) {
-                model.setNestedModel(rewriteGroupByTrivialExpressions(groupBy));
-                return model;
+
+        // if any expressions appear in group by but not the enclosing select, we can remove them
+        // intentional backwards loop since we are removing group by nodes
+        for (int i = groupBy.getGroupBy().size() - 1; i > 0; i--) {
+            final ExpressionNode node = groupBy.getGroupBy().getQuick(i);
+
+            boolean matching = false;
+            for (int j = 0, m = choose.getColumns().size(); j < m; j++) {
+                final ExpressionNode chooseNode = choose.getColumns().getQuick(j).getAst();
+                matching |= ExpressionNode.compareNodesExact(node, chooseNode);
             }
-        }
 
-        CharSequenceIntHashMap literalAppearanceCount = new CharSequenceIntHashMap();
-
-        // Count how many appearances of a literal there are.
-        // If there are >1 then we should lift them out of the group by if possible
-        for (int i = 0, n = groupBy.getGroupBy().size(); i < n; i++) {
-            traversalAlgo.traverse(groupBy.getGroupBy().getQuick(i), countLiteralAppearancesVisitor.of(literalAppearanceCount));
-        }
+            assert matching;
 
 
-        for (int i = 0, n = literalAppearanceCount.size(); i < n; i++) {
-
+            if (node.type == OPERATION) {
+                // copy column to a new select node enclosing this group by
+                groupBy.getGroupBy().remove(i);
+            }
         }
 
         return model;

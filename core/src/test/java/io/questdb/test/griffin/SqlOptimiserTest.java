@@ -1456,7 +1456,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    EventTime timestamp\n" +
                     ") timestamp(EventTime) partition by day wal;");
 
-
             String original = "SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c \n" +
                     "FROM hits \n" +
                     "GROUP BY ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3 \n" +
